@@ -14,16 +14,22 @@ option(MYBC_BUILD_TESTS "Build the unit tests" ON)
 
 find_package(Threads REQUIRED)
 
-# Protocol codec, parser and logging. Everything here is platform-independent
-# and covered by tests, so it also builds inside the Linux CI container.
+# Protocol codec, parser, logging and the OpenBikeControl TCP server.
+# Everything here is platform-independent except the mDNS advertiser, which
+# uses dns_sd on macOS and falls back to a no-op stub elsewhere.
 add_library(mybc_core
   src/log.cpp
   src/obc/protocol.cpp
+  src/obc/server.cpp
+  src/obc/mdns.cpp
 )
 
 target_include_directories(mybc_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(mybc_core PUBLIC cxx_std_17)
 target_link_libraries(mybc_core PUBLIC Threads::Threads)
+
+add_executable(mybc src/main.cpp)
+target_link_libraries(mybc PRIVATE mybc_core)
 
 if(MYBC_BUILD_TESTS)
   enable_testing()
