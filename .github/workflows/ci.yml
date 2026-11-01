@@ -7,7 +7,9 @@ on:
 jobs:
   windows:
     name: Windows (MSVC + SimpleBLE)
-    runs-on: windows-latest
+    # Pin the VS 2022 image: windows-latest is now VS 2026, whose CMake
+    # generator needs CMake >= 4.2 (not installed on that image yet).
+    runs-on: windows-2022
     timeout-minutes: 30
 
     steps:

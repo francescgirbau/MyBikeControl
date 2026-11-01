@@ -62,6 +62,10 @@ ctest --test-dir build -C Release --output-on-failure
 
 El binari queda a `build\Release\mybc.exe`.
 
+> Si fas servir **Visual Studio 2026**, cal **CMake ≥ 4.2** i el generador
+> `"Visual Studio 18 2026"` en lloc de `"Visual Studio 17 2022"`. Amb Visual
+> Studio 2022 n'hi ha prou amb CMake ≥ 3.21.
+
 Si no vols BLE (per exemple, per compilar només el transport):
 
 ```powershell
