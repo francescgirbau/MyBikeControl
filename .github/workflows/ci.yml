@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    name: Windows (MSVC + SimpleBLE)
+    # Pin the VS 2022 image: windows-latest is now VS 2026, whose CMake
+    # generator needs CMake >= 4.2 (not installed on that image yet).
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -G "Visual Studio 17 2022" -A x64
+          -DMYBC_WITH_BLE=ON
+          -DMYBC_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Smoke test the demo server
+        shell: pwsh
+        run: |
+          $exe = "build\Release\mybc.exe"
+          $port = 18080
+          $proc = Start-Process -FilePath $exe `
+            -ArgumentList "serve", "--demo", "--no-mdns", "--port", "$port" `
+            -PassThru -NoNewWindow
+
+          try {
+            $client = $null
+            for ($i = 0; $i -lt 20 -and $null -eq $client; $i++) {
+              try {
+                $client = [System.Net.Sockets.TcpClient]::new("127.0.0.1", $port)
+              } catch {
+                Start-Sleep -Milliseconds 250
+              }
+            }
+            if ($null -eq $client) {
+              throw "could not connect to the demo server"
+            }
+
+            $stream = $client.GetStream()
+            $stream.ReadTimeout = 5000
+            $buffer = New-Object byte[] 16
+            $read = $stream.Read($buffer, 0, $buffer.Length)
+            if ($read -gt 0) {
+              $hex = ($buffer[0..($read - 1)] | ForEach-Object { $_.ToString("x2") }) -join " "
+            } else {
+              $hex = "<empty>"
+            }
+            Write-Host "received: $hex"
+
+            if ($read -lt 3 -or $buffer[0] -ne 0x02) {
+              throw "expected a device status message (0x02 ...)"
+            }
+
+            $client.Close()
+          } finally {
+            if ($proc -and -not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force
+            }
+          }
+
+  linux:
+    name: Linux (codec and TCP server)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DMYBC_WITH_BLE=OFF
+          -DMYBC_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

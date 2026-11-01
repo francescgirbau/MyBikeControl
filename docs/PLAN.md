@@ -6,8 +6,9 @@
 
 - **Versió:** 0.1.0 (esquelet + Fase 1)
 - **Data:** 2026-11-01
-- **Plataforma objectiu:** macOS (Apple Silicon o Intel)
-- **Estat:** `scan` i `inspect` implementats; `serve` amb transport mDNS/TCP i mode demo.
+- **Plataforma objectiu:** Windows 10 1709+ / Windows 11, x64
+- **Estat:** `scan` i `inspect` implementats; `serve` amb transport mDNS/TCP i mode demo,
+  amb sockets Winsock i DNS-SD natiu de Windows.
 
 ---
 
@@ -82,10 +83,10 @@ Responsabilitats:
 | Element | Elecció | Motiu |
 | --- | --- | --- |
 | Llenguatge | C++17 | Requerit; suficient per a threads, sockets i BLE |
-| Build | CMake ≥ 3.21 | SimpleBLE 1.3 ho exigeix |
-| BLE central | SimpleBLE 1.3.0 | Multiplataforma, API simple, backend CoreBluetooth |
-| Transport app | mDNS + TCP (POSIX) | C++ pur, sense APIs de perifèric, suportat per MyWhoosh |
-| mDNS | `dns_sd` (Bonjour) a macOS | Zero dependències externes; ve amb el sistema |
+| Build | CMake ≥ 3.21 + MSVC 2022 | SimpleBLE 1.3 ho exigeix; MSVC per al backend WinRT |
+| BLE central | SimpleBLE 1.3.0 | Multiplataforma, API simple, backend WinRT a Windows |
+| Transport app | mDNS + TCP (Winsock) | C++ pur, sense APIs de perifèric, suportat per MyWhoosh |
+| mDNS | DNS-SD natiu de Windows (`DnsServiceRegister`) | Zero dependències externes; Windows 10 1709+ |
 | Concurrència | `std::thread`, `std::mutex`, `std::atomic` | Un fil per client TCP + un fil d'acceptació |
 | Logs | logger propi amb timestamps | Sense dependències; `spdlog` és opcional més endavant |
 | Config | JSON (Fase 3) | Mapatge de botons i ajustos sense recompilar |
@@ -108,6 +109,10 @@ Si algun dia es vol comercialitzar, caldrà llicència alternativa o canviar de 
 - TXT: `version=1`, `id=<únic>`, `name=<nom>`, `service-uuids=d273f680-d548-419d-b9d1-fa0472345229`,
   `manufacturer=<nom>`, `model=<model>`
 - TCP: `<ip>:<port>` (per defecte 8080)
+
+A Windows s'implementa amb `DnsServiceRegister` / `DnsServiceConstructInstance`
+(`dnsapi.lib`). El nom d'instància és el FQDN anterior i el host és
+`<nom-equip>.local`. A macOS es manté `dns_sd` com a plataforma secundària.
 
 ### 5.2 Missatges
 
@@ -203,7 +208,7 @@ cap event espuri en repòs.
 
 - Mesurar de puny a canvi de resistència: log de timestamp al bridge + observació a MyWhoosh.
 - Optimitzar: un `send()` per missatge, `TCP_NODELAY`, cap operació bloquejant al camí crític.
-- Provar amb MyWhoosh en el mateix Mac i en un altre dispositiu de la xarxa.
+- Provar amb MyWhoosh en el mateix PC Windows i en un altre dispositiu de la xarxa.
 
 **Criteri d'acceptació:** latència percebuda < 100 ms; mesurada < 60 ms en local.
 
@@ -217,17 +222,18 @@ cap event espuri en repòs.
 
 **Criteri d'acceptació:** desconnectar i reconnectar el manillar no requereix reiniciar el bridge.
 
-### Fase 6 — Empaquetat macOS
+### Fase 6 — Empaquetat Windows
 
-- Bundle `.app` amb `Info.plist`:
-  - `NSBluetoothAlwaysUsageDescription`
-  - `NSLocalNetworkUsageDescription`
-  - `NSBonjourServices` = `_openbikecontrol._tcp`
-- Signatura ad-hoc o Developer ID; notarització opcional.
-- Icona, `LSUIElement` si es vol sense Dock, i arrencada manual o `launchd`.
+- Distribuir un sol `mybc.exe` (o un instal·lador) amb les dependències correctes:
+  - opció A: runtime dinàmic de MSVC + VC++ Redistributable;
+  - opció B: runtime estàtic (`/MT`) per evitar dependències.
+- Firewall: documentar i, si es pot, afegir la regla d'entrada per TCP 8080 i UDP 5353
+  en instal·lar.
+- Opcional: icona a la safata, arrencada automàtica i mode servei de Windows.
+- Signatura de codi opcional per evitar avisos de SmartScreen.
 
-**Criteri d'acceptació:** doble clic a l'app, permisos concedits una vegada, i funciona
-sense Terminal.
+**Criteri d'acceptació:** doble clic a l'executable, permís de firewall concedit una
+vegada, i funciona sense Terminal.
 
 ---
 
@@ -236,8 +242,10 @@ sense Terminal.
 | Risc | Impacte | Mitigació |
 | --- | --- | --- |
 | El controlador només accepta connexions de Zwift o requereix *bonding* | Alt | Fase 1 amb `scan`/`inspect`; si cal, estudiar `zwift_unlock.dart` i el firmware suportat |
-| MyWhoosh no descobreix el servei mDNS | Mitjà | Fase 0 amb el mock Python; si falla, provar BLE perifèric (SimpleBLE 1.3 `create_local_peripheral`) |
-| Permisos TCC de macOS (Bluetooth i Xarxa Local) | Mitjà | `Info.plist` + executar des de Terminal.app o signar l'app; documentar el primer arrencada |
+| MyWhoosh no descobreix el servei mDNS | Mitjà | Fase 0 amb el mock Python; comprovar firewall, perfil de xarxa **Private** i UDP 5353; si falla, provar BLE perifèric (SimpleBLE 1.3 `create_local_peripheral`) |
+| Firewall de Windows o xarxa **Public** bloqueja mDNS/TCP | Mitjà | Afegir `mybc.exe` a les excepcions, xarxa privada, ports TCP 8080 i UDP 5353; documentar-ho |
+| `DnsServiceRegister` no existeix (Windows < 1709) | Baix | Requerir Windows 10 1709+ o Windows 11; detectar i mostrar un error clar |
+| El backend WinRT de SimpleBLE falla o no veu l'adaptador | Mitjà | CI a `windows-latest`; comprovar Bluetooth i permisos; `scan` com a diagnòstic |
 | El protocol del controlador canvia segons firmware | Mitjà | Implementacions de referència per variant + tests amb payloads reals |
 | Framing TCP ambigu (sense length prefix) | Mitjà | Un `send()` per missatge, `TCP_NODELAY`, parser tolerant, no coalescer |
 | Latència | Baix | Fil dedicat, cues lock-free al camí crític, mesurarem |
@@ -266,6 +274,9 @@ sense Terminal.
   - Exemples Python: `examples/python/mock_device_tcp.py`, `mdns_trainer_app.py`
 - BikeControl (referència del costat controlador): <https://github.com/OpenBikeControl/bikecontrol>
 - SimpleBLE: <https://github.com/OpenBluetoothToolbox/SimpleBLE>
+- Windows DNS-SD: <https://learn.microsoft.com/windows/win32/api/windns/nf-windns-dnsserviceregister>
+  i <https://learn.microsoft.com/windows/win32/api/windns/nf-windns-dnsserviceconstructinstance>
+- Winsock: <https://learn.microsoft.com/windows/win32/winsock/windows-sockets-start-page-2>
 - MyShift (shifting virtual de MyWhoosh): <https://mywhoosh.com/myshift-mywhooshs-virtual-shifting-explained/>
 - Compatibilitat BikeControl + MyWhoosh: <https://bikecontrol.app/use-zwift-play-with-mywhoosh/>
 
@@ -279,4 +290,6 @@ sense Terminal.
    característica corresponent del controlador.
 4. **BLE perifèric** a més de mDNS: útil si MyWhoosh falla per xarxa o per a apps que només
    suporten OBC per BLE (Biketerra, Ride Cave).
-5. **Distribució:** només local o `.app` signada per compartir amb altres usuaris.
+5. **Distribució Windows:** `.exe` amb runtime dinàmic + VC++ Redistributable, o runtime
+   estàtic; instal·lador/MSIX, signatura i arrencada automàtica.
+6. **Mode d'execució:** aplicació de consola, safata del sistema o servei de Windows.
