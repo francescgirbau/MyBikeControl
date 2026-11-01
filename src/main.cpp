@@ -3,17 +3,20 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "mybc/ble/scanner.h"
 #include "mybc/log.h"
 #include "mybc/obc/mdns.h"
 #include "mybc/obc/server.h"
 
 namespace obc = mybc::obc;
+namespace ble = mybc::ble;
 
 namespace {
 
@@ -27,13 +30,21 @@ void printUsage() {
     std::cout << "MyBikeControl " << kVersion
               << " - Zwift Ride/Play/Click to OpenBikeControl bridge\n\n"
               << "Usage:\n"
+              << "  mybc scan    [--seconds N] [--filter TEXT]\n"
+              << "  mybc inspect <index|name|address> [--seconds N] [--notify]\n"
               << "  mybc serve   [--port N] [--name TEXT] [--id TEXT] [--no-mdns] [--demo]\n"
               << "  mybc version\n"
               << "  mybc help\n\n"
               << "Commands:\n"
-              << "  serve    Advertise an OpenBikeControl device over mDNS and TCP.\n"
+              << "  scan     List nearby BLE devices (run this first).\n"
+              << "  inspect  Connect to one device and dump its GATT services.\n"
+              << "           With --notify, subscribe to every notifying characteristic\n"
+              << "           and hexdump the payloads (use this to decode the controller).\n"
+              << "  serve    Advertise an OpenBikeControl device and forward shift events.\n"
               << "           --demo sends synthetic shift up/down without hardware.\n\n"
               << "Options:\n"
+              << "  --seconds N   Scan/listen duration (default 8).\n"
+              << "  --filter S    Case-insensitive name/address filter for scan.\n"
               << "  --port N      TCP port for serve (default 8080, 0 = random).\n"
               << "  --name S      Device name advertised to the trainer app.\n"
               << "  --id S        Unique device id advertised in the mDNS TXT record.\n"
@@ -54,6 +65,62 @@ std::optional<std::string> optionValue(const std::vector<std::string>& args,
 
 bool hasOption(const std::vector<std::string>& args, const std::string& name) {
     return std::find(args.begin(), args.end(), name) != args.end();
+}
+
+int positiveInt(const std::optional<std::string>& value, int fallback) {
+    if (!value) {
+        return fallback;
+    }
+    const int parsed = std::atoi(value->c_str());
+    return parsed > 0 ? parsed : fallback;
+}
+
+int runScan(const std::vector<std::string>& args) {
+    ble::ScanOptions options;
+    options.seconds = positiveInt(optionValue(args, "--seconds"), 8);
+    options.filter = optionValue(args, "--filter").value_or("");
+
+    mybc::logInfo("scanning for " + std::to_string(options.seconds) + " s...");
+    const std::vector<ble::DeviceSummary> devices = ble::scan(options);
+
+    if (devices.empty()) {
+        mybc::logWarn("no devices found. Make sure the controller is awake and not connected "
+                      "to Zwift, then try again.");
+        return 1;
+    }
+
+    std::cout << "\n  #  " << std::left << std::setw(30) << "Name" << std::setw(38)
+              << "Address" << std::right << std::setw(5) << "RSSI" << "  Conn  Services\n";
+
+    for (size_t i = 0; i < devices.size(); ++i) {
+        const ble::DeviceSummary& device = devices[i];
+        std::cout << "  " << std::left << std::setw(3) << i << std::setw(30)
+                  << (device.name.empty() ? "-" : device.name) << std::setw(38) << device.address
+                  << std::right << std::setw(5) << device.rssi << " dBm  "
+                  << (device.connectable ? "yes" : "no ") << "   ";
+
+        for (const std::string& service : device.advertisedServices) {
+            std::cout << service << " ";
+        }
+        std::cout << "\n";
+    }
+
+    std::cout << "\nNext: mybc inspect <index> --notify\n";
+    return 0;
+}
+
+int runInspect(const std::vector<std::string>& args) {
+    if (args.size() < 2 || args[1].rfind("--", 0) == 0) {
+        mybc::logError("inspect needs a target: index, name or address");
+        return 2;
+    }
+
+    ble::InspectOptions options;
+    options.target = args[1];
+    options.seconds = positiveInt(optionValue(args, "--seconds"), 8);
+    options.subscribeNotifications = hasOption(args, "--notify");
+
+    return ble::inspect(options) ? 0 : 1;
 }
 
 int runServe(const std::vector<std::string>& args) {
@@ -197,6 +264,12 @@ int main(int argc, char** argv) {
     if (command == "version" || command == "--version") {
         std::cout << "MyBikeControl " << kVersion << "\n";
         return 0;
+    }
+    if (command == "scan") {
+        return runScan(args);
+    }
+    if (command == "inspect") {
+        return runInspect(args);
     }
     if (command == "serve") {
         return runServe(args);
