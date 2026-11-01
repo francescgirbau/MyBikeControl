@@ -1,5 +1,10 @@
 #include "mybc/obc/server.h"
 
+#if defined(_WIN32)
+#include <winsock2.h>
+
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -7,9 +12,9 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+#endif
 
 #include <algorithm>
-#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
@@ -18,9 +23,18 @@
 #include <vector>
 
 #include "mybc/log.h"
+#include "mybc/net.h"
 
 namespace mybc::obc {
 namespace {
+
+#if defined(_WIN32)
+constexpr int kSocketError = SOCKET_ERROR;
+constexpr int kShutdownBoth = SD_BOTH;
+#else
+constexpr int kSocketError = -1;
+constexpr int kShutdownBoth = SHUT_RDWR;
+#endif
 
 #ifdef MSG_NOSIGNAL
 constexpr int kSendFlags = MSG_NOSIGNAL;
@@ -28,11 +42,13 @@ constexpr int kSendFlags = MSG_NOSIGNAL;
 constexpr int kSendFlags = 0;
 #endif
 
-void configureClientSocket(int fd) {
+void configureClientSocket(net::Socket fd) {
     int yes = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&yes),
+               static_cast<int>(sizeof(yes)));
 #ifdef SO_NOSIGPIPE
-    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, reinterpret_cast<const char*>(&yes),
+               static_cast<int>(sizeof(yes)));
 #endif
 }
 
@@ -41,7 +57,7 @@ void configureClientSocket(int fd) {
 struct Server::Shared {
     std::mutex mutex;
     std::condition_variable cv;
-    std::vector<int> clients;
+    std::vector<net::Socket> clients;
     std::atomic<bool> running{false};
 
     AppInfoCallback onAppInfo;
@@ -58,34 +74,41 @@ bool Server::start() {
         return false;
     }
 
-    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        logError(std::string("socket() failed: ") + std::strerror(errno));
+    const net::Socket fd = static_cast<net::Socket>(::socket(AF_INET, SOCK_STREAM, 0));
+    if (fd == net::kInvalidSocket) {
+        logError("socket() failed: " + net::errorString(net::lastError()));
         return false;
     }
 
     int yes = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes),
+               static_cast<int>(sizeof(yes)));
 
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_ANY);
     address.sin_port = htons(port_);
 
-    if (::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) < 0) {
-        logError("bind() failed on port " + std::to_string(port_) + ": " + std::strerror(errno));
-        ::close(fd);
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&address),
+               static_cast<int>(sizeof(address))) == kSocketError) {
+        logError("bind() failed on port " + std::to_string(port_) + ": " +
+                 net::errorString(net::lastError()));
+        net::closeSocket(fd);
         return false;
     }
 
-    if (::listen(fd, 4) < 0) {
-        logError(std::string("listen() failed: ") + std::strerror(errno));
-        ::close(fd);
+    if (::listen(fd, 4) == kSocketError) {
+        logError("listen() failed: " + net::errorString(net::lastError()));
+        net::closeSocket(fd);
         return false;
     }
 
     sockaddr_in bound{};
+#if defined(_WIN32)
+    int boundLength = static_cast<int>(sizeof(bound));
+#else
     socklen_t boundLength = sizeof(bound);
+#endif
     if (::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &boundLength) == 0) {
         port_ = ntohs(bound.sin_port);
     }
@@ -114,20 +137,20 @@ void Server::stop() {
     }
 
     // The accept loop wakes up on its 200 ms select timeout; joining before
-    // closing avoids closing an fd that select() is still watching.
+    // closing avoids closing a socket that select() is still watching.
     if (acceptThread_.joinable()) {
         acceptThread_.join();
     }
 
-    if (listenFd_ >= 0) {
-        ::close(listenFd_);
-        listenFd_ = -1;
+    if (listenFd_ != net::kInvalidSocket) {
+        net::closeSocket(listenFd_);
+        listenFd_ = net::kInvalidSocket;
     }
 
     if (shared_) {
         std::unique_lock<std::mutex> lock(shared_->mutex);
-        for (const int fd : shared_->clients) {
-            ::shutdown(fd, SHUT_RDWR);
+        for (const net::Socket fd : shared_->clients) {
+            ::shutdown(fd, kShutdownBoth);
         }
         shared_->cv.wait_for(lock, std::chrono::milliseconds(500),
                              [this] { return shared_->clients.empty(); });
@@ -194,13 +217,19 @@ void Server::acceptLoop() {
         timeout.tv_sec = 0;
         timeout.tv_usec = 200 * 1000;
 
+#if defined(_WIN32)
+        // Winsock ignores the first argument of select().
+        const int ready = ::select(0, &readSet, nullptr, nullptr, &timeout);
+#else
         const int ready = ::select(listenFd_ + 1, &readSet, nullptr, nullptr, &timeout);
+#endif
         if (ready <= 0) {
             continue;
         }
 
-        const int clientFd = ::accept(listenFd_, nullptr, nullptr);
-        if (clientFd < 0) {
+        const net::Socket clientFd =
+            static_cast<net::Socket>(::accept(listenFd_, nullptr, nullptr));
+        if (clientFd == net::kInvalidSocket) {
             continue;
         }
 
@@ -225,22 +254,25 @@ void Server::acceptLoop() {
     }
 }
 
-void Server::clientLoop(std::shared_ptr<Shared> shared, int fd) {
+void Server::clientLoop(std::shared_ptr<Shared> shared, net::Socket fd) {
     StreamParser parser;
     uint8_t buffer[512];
 
     while (shared->running) {
-        const ssize_t received = ::recv(fd, buffer, sizeof(buffer), 0);
+        const int received =
+            ::recv(fd, reinterpret_cast<char*>(buffer), static_cast<int>(sizeof(buffer)), 0);
         if (received <= 0) {
             break;
         }
 
-        for (const IncomingMessage& message : parser.feed(buffer, static_cast<size_t>(received))) {
+        for (const IncomingMessage& message :
+             parser.feed(buffer, static_cast<size_t>(received))) {
             switch (message.kind) {
                 case IncomingKind::AppInfo: {
                     logInfo("app info: " + message.appInfo.appId + " v" +
                             message.appInfo.appVersion + " (" +
-                            std::to_string(message.appInfo.supportedButtons.size()) + " buttons)");
+                            std::to_string(message.appInfo.supportedButtons.size()) +
+                            " buttons)");
                     AppInfoCallback onAppInfo;
                     {
                         std::lock_guard<std::mutex> lock(shared->mutex);
@@ -283,7 +315,7 @@ void Server::clientLoop(std::shared_ptr<Shared> shared, int fd) {
     }
     shared->cv.notify_all();
 
-    ::close(fd);
+    net::closeSocket(fd);
     logInfo("app disconnected");
 }
 
@@ -295,13 +327,14 @@ bool Server::sendAll(const uint8_t* data, size_t length) {
     std::lock_guard<std::mutex> lock(shared_->mutex);
     bool delivered = false;
 
-    for (const int fd : shared_->clients) {
-        const ssize_t sent = ::send(fd, data, length, kSendFlags);
-        if (sent == static_cast<ssize_t>(length)) {
+    for (const net::Socket fd : shared_->clients) {
+        const int sent = static_cast<int>(::send(
+            fd, reinterpret_cast<const char*>(data), static_cast<int>(length), kSendFlags));
+        if (sent == static_cast<int>(length)) {
             delivered = true;
         } else {
             // Let the client thread notice and clean up.
-            ::shutdown(fd, SHUT_RDWR);
+            ::shutdown(fd, kShutdownBoth);
         }
     }
 

@@ -10,6 +10,11 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+if(MSVC)
+  # The sources and log strings are UTF-8.
+  add_compile_options(/utf-8)
+endif()
+
 option(MYBC_WITH_BLE "Enable BLE support via SimpleBLE" ON)
 option(MYBC_BUILD_TESTS "Build tests" ON)
 
@@ -17,6 +22,7 @@ find_package(Threads REQUIRED)
 
 add_library(mybc_core
   src/log.cpp
+  src/net.cpp
   src/obc/protocol.cpp
   src/obc/server.cpp
   src/obc/mdns.cpp
@@ -24,6 +30,16 @@ add_library(mybc_core
 target_include_directories(mybc_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(mybc_core PUBLIC cxx_std_17)
 target_link_libraries(mybc_core PUBLIC Threads::Threads)
+
+if(WIN32)
+  # Winsock for the TCP server, DNS-SD (DnsServiceRegister) for mDNS.
+  target_compile_definitions(mybc_core PUBLIC
+    _WIN32_WINNT=0x0A00
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+  )
+  target_link_libraries(mybc_core PUBLIC ws2_32 dnsapi)
+endif()
 
 add_executable(mybc
   src/main.cpp

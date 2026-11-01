@@ -14,7 +14,8 @@ Zwift Ride/Play --BLE--> MyBikeControl --OpenBikeControl--> MyWhoosh --FTMS--> K
 > Dues centrals al mateix *Fitness Machine Control Point* es trepitgen i la resistència
 > fa salts. Enviant només `Shift Up`/`Shift Down` no hi ha conflicte.
 
-Pla complet i decisions: [`docs/PLAN.md`](docs/PLAN.md).
+**Plataforma objectiu: Windows 10/11 x64.** Pla complet i decisions:
+[`docs/PLAN.md`](docs/PLAN.md).
 
 ---
 
@@ -28,31 +29,44 @@ Pla complet i decisions: [`docs/PLAN.md`](docs/PLAN.md).
 | 3. Pont i mapatge configurable | ⏳ |
 | 4. Integració i latència | ⏳ |
 | 5. Robustesa | ⏳ |
-| 6. Empaquetat macOS | ⏳ |
+| 6. Empaquetat Windows | ⏳ |
+
+> `serve` ja anuncia el dispositiu per mDNS i accepta connexions TCP. El que encara
+> no hi és és el descodificador que converteix les notificacions BLE del manillar en
+> botons; per això `--demo` és la manera de provar el transport avui.
 
 ---
 
 ## Requisits
 
-- macOS 13+ (Apple Silicon o Intel) amb Bluetooth.
-- Xcode Command Line Tools (`xcode-select --install`).
-- CMake ≥ 3.21.
+- **Windows 10 versió 1709 (build 16299) o posterior**, o **Windows 11**, x64.
+  L'API de mDNS (`DnsServiceRegister`) necessita Windows 10 1709+.
+- **Visual Studio 2022** amb la càrrega *Desktop development with C++*
+  (MSVC v143 i Windows 10/11 SDK).
+- **CMake ≥ 3.21** (el pots instal·lar amb el Visual Studio Installer o des de cmake.org).
+- **Git**.
+- Adaptador Bluetooth 4.0+ (el del portàtil o un dongle USB).
 - Connexió a internet la primera vegada (CMake baixa SimpleBLE 1.3.0).
 
 ---
 
 ## Compilar
 
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-ctest --test-dir build --output-on-failure
+Des de PowerShell, a l'arrel del repo:
+
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
 ```
+
+El binari queda a `build\Release\mybc.exe`.
 
 Si no vols BLE (per exemple, per compilar només el transport):
 
-```bash
-cmake -S . -B build -DMYBC_WITH_BLE=OFF
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DMYBC_WITH_BLE=OFF
+cmake --build build --config Release
 ```
 
 ---
@@ -61,16 +75,16 @@ cmake -S . -B build -DMYBC_WITH_BLE=OFF
 
 ### 1. Descobrir el manillar
 
-```bash
-./build/mybc scan --seconds 10
+```powershell
+.\build\Release\mybc.exe scan --seconds 10
 ```
 
 El manillar ha d'estar despert i **no connectat a Zwift**. Prem un botó per despertar-lo.
 
 ### 2. Inspeccionar serveis i capturar botons
 
-```bash
-./build/mybc inspect 0 --notify --seconds 30
+```powershell
+.\build\Release\mybc.exe inspect 0 --notify --seconds 30
 ```
 
 Mostra l'arbre GATT i hexdumpeja cada notificació. Prem els botons durant la captura:
@@ -78,8 +92,8 @@ aquestes dades són les que faran servir per implementar el descodificador de la
 
 ### 3. Provar el pont sense manillar
 
-```bash
-./build/mybc serve --demo
+```powershell
+.\build\Release\mybc.exe serve --demo
 ```
 
 Publica el dispositiu per mDNS i alterna `Shift Up`/`Shift Down` cada 3 segons.
@@ -87,8 +101,8 @@ Publica el dispositiu per mDNS i alterna `Shift Up`/`Shift Down` cada 3 segons.
 
 ### 4. Executar el pont
 
-```bash
-./build/mybc serve --name "MyBikeControl"
+```powershell
+.\build\Release\mybc.exe serve --name "MyBikeControl"
 ```
 
 Opcions:
@@ -115,17 +129,24 @@ El KICKR segueix emparellat a MyWhoosh com sempre. No el connectis al bridge.
 
 ---
 
-## Permisos de macOS
+## Permisos i firewall de Windows
 
-La primera vegada, macOS demanarà permisos a l'app que executa el binari (Terminal o iTerm):
+La primera vegada que arrenquis `mybc.exe`, Windows Defender Firewall et pot demanar
+permís:
 
-- **Bluetooth** — per connectar-se al manillar.
-- **Xarxa local** — per anunciar-se per mDNS i acceptar connexions TCP.
+- **Xarxa privada** — per rebre connexions TCP de MyWhoosh i per anunciar-te per mDNS.
+- **Xarxa pública** — no cal; deixa-ho desactivat si només jugues a casa.
 
-Si els denegues, ves a *System Settings → Privacy & Security* i torna'ls a activar.
-En una versió empaquetada, aquests permisos aniran declarats a l'`Info.plist`
-(`NSBluetoothAlwaysUsageDescription`, `NSLocalNetworkUsageDescription`,
-`NSBonjourServices`).
+Si el port 8080 o l'mDNS no funcionen:
+
+1. Ves a *Windows Security → Firewall & network protection → Allow an app through firewall*.
+2. Afegeix `mybc.exe` i marca **Private**.
+3. Comprova que la xarxa de casa està marcada com a **Private**
+   (*Settings → Network & internet → Wi-Fi → Network profile type*).
+4. L'mDNS fa servir **UDP 5353** (multicast); el TCP del bridge, **8080**.
+
+No cal cap permís especial de Bluetooth: SimpleBLE fa servir WinRT i el Windows
+Bluetooth stack.
 
 ---
 
@@ -133,18 +154,24 @@ En una versió empaquetada, aquests permisos aniran declarats a l'`Info.plist`
 
 | Símptoma | Causa probable | Solució |
 | --- | --- | --- |
-| `No Bluetooth adapter found` | Bluetooth apagat o permís denegat | Activa'l i revisa *Privacy & Security* |
+| `No Bluetooth adapter found` | Bluetooth apagat o adaptador no disponible | Activa'l a *Settings → Bluetooth & devices* |
 | El manillar no apareix a `scan` | Està connectat a Zwift o adormit | Desconnecta'l de Zwift i prem un botó |
-| MyWhoosh no veu el bridge | mDNS bloquejat o xarxa diferent | Mateix Wi-Fi, revisa el permís de xarxa local i el firewall |
+| `DnsServiceRegister failed with code …` | Windows massa antic, DNS Client aturat o xarxa bloquejada | Windows 10 1709+; revisa el servei *DNS Client* i el firewall |
+| MyWhoosh no veu el bridge | mDNS bloquejat o xarxa diferent | Mateixa xarxa, perfil **Private**, firewall i UDP 5353 |
+| `bind() failed on port 8080` | Port ocupat | `--port 0` o un altre port |
 | La marxa no canvia | MyShift desactivat o app no connectada | Comprova el log `app connected` i l'estat de MyShift |
 | La resistència fa salts | Algú està controlant el KICKR directament | Desconnecta el bridge del KICKR; només MyWhoosh hi ha de parlar |
 
+Per veure què passa amb mDNS, arrenca amb `--verbose` i comprova el log
+`mDNS advertising as "…"`.
+
 ---
 
-## Docker
+## Docker (només CI i demo)
 
-La imatge final executa l'app. Per defecte arrenca el servidor en mode demo, que no
-necessita Bluetooth:
+La imatge de Docker **no és el runtime de Windows**. Docker Desktop corre els
+contenidors en una VM Linux sense el Bluetooth de l'amfitrió, i el mDNS no travessa
+la VM. Serveix per compilar, passar tests i provar el transport TCP en mode demo:
 
 ```bash
 docker build -t mybc .
@@ -153,30 +180,11 @@ docker run --rm -p 8080:8080 mybc
 docker compose up serve-demo
 ```
 
-El servidor escolta a `0.0.0.0:8080` i envia `Shift Up`/`Shift Down` cada 3 segons.
-Com que va amb `--no-mdns`, MyWhoosh no el descobrirà sol: serveix per provar el
+El contenidor arrenca `mybc serve --demo --no-mdns` i escolta a `0.0.0.0:8080`.
+Com que no anuncia per mDNS, MyWhoosh no el descobrirà sol: és per provar el
 transport amb qualsevol client TCP.
 
-### Què funciona a cada entorn
-
-| Entorn | BLE | mDNS | Ús |
-| --- | --- | --- | --- |
-| macOS natiu | ✅ | ✅ (`dns_sd`) | Ús real amb MyWhoosh |
-| Docker Desktop (macOS/Windows) | ❌ | ❌ | Demo TCP i tests |
-| Linux amb `network_mode: host` | ⚠️ Fase 2 | ❌ (encara stub) | Servidor OBC; falten BLE i Avahi |
-
-Docker Desktop corre els contenidors en una VM Linux sense el Bluetooth de
-l'amfitrió, i el mDNS no travessa la VM per defecte. Per això el runtime real amb
-MyWhoosh és natiu al Mac.
-
-En un Linux amb Bluetooth es pot provar el servei `serve` (xarxa de l'amfitrió i
-dispositius muntats):
-
-```bash
-docker compose up serve
-```
-
-### CI i tests
+CI i tests:
 
 ```bash
 docker compose run --rm test          # ctest amb MYBC_WITH_BLE=OFF
@@ -184,21 +192,28 @@ docker compose build ble-compile      # compila amb SimpleBLE (MYBC_WITH_BLE=ON)
 docker compose run --rm version       # mybc version
 ```
 
+Per a l'ús real amb MyWhoosh, executa el binari natiu de Windows.
+
+---
+
 ## Estructura
 
 ```
 CMakeLists.txt
 Dockerfile
 compose.yaml
+.github/workflows/ci.yml
 include/mybc/
   log.h
+  net.h               # abstracció Winsock/POSIX
   ble/scanner.h
   obc/protocol.h      # IDs, missatges i parser
   obc/server.h        # servidor TCP OBC
-  obc/mdns.h          # anunci mDNS (dns_sd)
+  obc/mdns.h          # anunci mDNS (DNS-SD)
 src/
   main.cpp            # CLI: scan / inspect / serve
   log.cpp
+  net.cpp
   ble/scanner.cpp
   obc/protocol.cpp
   obc/server.cpp

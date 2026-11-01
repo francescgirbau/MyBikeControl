@@ -8,10 +8,11 @@
 
 namespace mybc::obc {
 
-/// Advertises the bridge as an OpenBikeControl device over mDNS/Bonjour.
+/// Advertises the bridge as an OpenBikeControl device over mDNS/DNS-SD.
 ///
-/// Implemented with dns_sd on macOS. Other platforms are a no-op stub so the
-/// TCP transport can still be exercised with a manual connection.
+/// Windows uses the native DNS-SD API (`DnsServiceRegister`); macOS uses
+/// `dns_sd`. Other platforms are a no-op stub so the TCP transport can still
+/// be exercised with a manual connection.
 class MdnsAdvertiser {
   public:
     MdnsAdvertiser(std::string serviceName, uint16_t port, DeviceInfo deviceInfo);

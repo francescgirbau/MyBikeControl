@@ -7,6 +7,7 @@
 #include <string>
 #include <thread>
 
+#include "mybc/net.h"
 #include "mybc/obc/protocol.h"
 
 namespace mybc::obc {
@@ -54,12 +55,12 @@ class Server {
     struct Shared;
 
     void acceptLoop();
-    static void clientLoop(std::shared_ptr<Shared> shared, int fd);
+    static void clientLoop(std::shared_ptr<Shared> shared, net::Socket fd);
     bool sendAll(const uint8_t* data, size_t length);
 
     DeviceInfo info_;
     uint16_t port_;
-    int listenFd_ = -1;
+    net::Socket listenFd_ = net::kInvalidSocket;
     std::atomic<bool> running_{false};
     std::thread acceptThread_;
     std::shared_ptr<Shared> shared_;

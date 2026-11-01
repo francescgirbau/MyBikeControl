@@ -12,8 +12,13 @@
 
 #include "mybc/ble/scanner.h"
 #include "mybc/log.h"
+#include "mybc/net.h"
 #include "mybc/obc/mdns.h"
 #include "mybc/obc/server.h"
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 namespace obc = mybc::obc;
 namespace ble = mybc::ble;
@@ -239,6 +244,21 @@ int runServe(const std::vector<std::string>& args) {
 int main(int argc, char** argv) {
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
+
+#if defined(_WIN32)
+    // The sources and log strings are UTF-8; make the Windows console match.
+    SetConsoleOutputCP(CP_UTF8);
+#endif
+
+    if (!mybc::net::initialize()) {
+        mybc::logError("failed to initialize the socket layer");
+        return 1;
+    }
+
+    struct SocketGuard {
+        ~SocketGuard() { mybc::net::cleanup(); }
+    };
+    [[maybe_unused]] SocketGuard socketGuard;
 
     std::vector<std::string> args;
     args.reserve(static_cast<size_t>(argc));

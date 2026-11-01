@@ -21,10 +21,9 @@ services:
       - "8080:8080"
     command: ["serve", "--demo", "--no-mdns"]
 
-  # Real server for a Linux host with Bluetooth.
+  # Real server for a Linux host (not the supported Windows runtime).
   # host networking is required for mDNS and for reaching the LAN.
-  # Uncomment the mounts (and privileged) to give the container the host
-  # Bluetooth stack. BLE reading is wired in Phase 2.
+  # BLE reading is wired in Phase 2.
   serve:
     build: .
     network_mode: host

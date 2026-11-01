@@ -1,12 +1,12 @@
-# Build, test and runtime image for MyBikeControl.
+# Build, test and demo image for MyBikeControl.
 #
-# Docker Desktop on macOS/Windows runs containers in a Linux VM without the
-# host Bluetooth stack, and mDNS does not cross the VM boundary by default.
-# The container is therefore useful for:
+# The supported runtime is the native Windows build (Winsock + DNS-SD + WinRT
+# Bluetooth). Docker Desktop on Windows/macOS runs containers in a Linux VM
+# without the host Bluetooth stack, and mDNS does not cross the VM boundary by
+# default. The container is therefore useful for:
 #   - CI (unit tests, BLE compile check)
 #   - a demo OBC server (--demo) reachable over TCP
-#   - a Linux host (e.g. Raspberry Pi) with host networking and device access
-# For real BLE + mDNS on a Mac, run the native build.
+# For real BLE + mDNS with MyWhoosh, run the native Windows executable.
 
 FROM debian:bookworm-slim AS build
 
