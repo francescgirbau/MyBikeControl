@@ -14,3 +14,16 @@ Zwift Ride/Play --BLE--> MyBikeControl --OpenBikeControl--> MyWhoosh --FTMS--> K
 > arriba als PRs següents.
 
 Pla complet, decisions i fases: [`docs/PLAN.md`](docs/PLAN.md).
+
+## Desenvolupament
+
+Requisits: CMake ≥ 3.21 i un compilador C++17.
+
+```bash
+cmake -S . -B build
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+```
+
+Aquest primer pas afegeix la llibreria `mybc_core` amb el codec i el parser
+d'OpenBikeControl, més els tests unitaris. Encara no hi ha executable.
