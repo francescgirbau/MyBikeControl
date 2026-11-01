@@ -141,27 +141,55 @@ En una versió empaquetada, aquests permisos aniran declarats a l'`Info.plist`
 
 ---
 
-## Docker (només CI i builds Linux)
+## Docker
 
-El contenidor **no** serveix per executar l'app. Docker Desktop a macOS/Windows
-corre els contenidors en una VM Linux sense accés al Bluetooth de l'amfitrió, i el
-mDNS del contenidor no arriba a MyWhoosh. El runtime ha de ser natiu.
-
-Sí que és útil per compilar i passar els tests en Linux:
+La imatge final executa l'app. Per defecte arrenca el servidor en mode demo, que no
+necessita Bluetooth:
 
 ```bash
 docker build -t mybc .
-docker run --rm mybc            # imprimeix la versió
-docker compose run --rm test    # executa ctest
+docker run --rm -p 8080:8080 mybc
+# equivalent:
+docker compose up serve-demo
 ```
 
-La imatge compila amb `MYBC_WITH_BLE=OFF` perquè el backend BLE de Linux necessita
-DBus i maquinari; el codec i el servidor TCP no en depenen.
+El servidor escolta a `0.0.0.0:8080` i envia `Shift Up`/`Shift Down` cada 3 segons.
+Com que va amb `--no-mdns`, MyWhoosh no el descobrirà sol: serveix per provar el
+transport amb qualsevol client TCP.
+
+### Què funciona a cada entorn
+
+| Entorn | BLE | mDNS | Ús |
+| --- | --- | --- | --- |
+| macOS natiu | ✅ | ✅ (`dns_sd`) | Ús real amb MyWhoosh |
+| Docker Desktop (macOS/Windows) | ❌ | ❌ | Demo TCP i tests |
+| Linux amb `network_mode: host` | ⚠️ Fase 2 | ❌ (encara stub) | Servidor OBC; falten BLE i Avahi |
+
+Docker Desktop corre els contenidors en una VM Linux sense el Bluetooth de
+l'amfitrió, i el mDNS no travessa la VM per defecte. Per això el runtime real amb
+MyWhoosh és natiu al Mac.
+
+En un Linux amb Bluetooth es pot provar el servei `serve` (xarxa de l'amfitrió i
+dispositius muntats):
+
+```bash
+docker compose up serve
+```
+
+### CI i tests
+
+```bash
+docker compose run --rm test          # ctest amb MYBC_WITH_BLE=OFF
+docker compose build ble-compile      # compila amb SimpleBLE (MYBC_WITH_BLE=ON)
+docker compose run --rm version       # mybc version
+```
 
 ## Estructura
 
 ```
 CMakeLists.txt
+Dockerfile
+compose.yaml
 include/mybc/
   log.h
   ble/scanner.h

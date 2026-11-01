@@ -1,0 +1,40 @@
+services:
+  # Fast test target (BLE off).
+  test:
+    build:
+      context: .
+      target: build
+    command: ["ctest", "--test-dir", "build", "--output-on-failure"]
+
+  # Compile-only check of the SimpleBLE integration (no hardware needed).
+  ble-compile:
+    build:
+      context: .
+      target: build-ble
+    command: ["ctest", "--test-dir", "build", "--output-on-failure"]
+
+  # Demo server reachable over TCP. Works on any Docker Desktop.
+  # It does not advertise over mDNS: connect a client to localhost:8080.
+  serve-demo:
+    build: .
+    ports:
+      - "8080:8080"
+    command: ["serve", "--demo", "--no-mdns"]
+
+  # Real server for a Linux host with Bluetooth.
+  # host networking is required for mDNS and for reaching the LAN.
+  # Uncomment the mounts (and privileged) to give the container the host
+  # Bluetooth stack. BLE reading is wired in Phase 2.
+  serve:
+    build: .
+    network_mode: host
+    # privileged: true
+    # volumes:
+    #   - /var/run/dbus:/var/run/dbus
+    #   - /dev/bus/usb:/dev/bus/usb
+    command: ["serve"]
+
+  # Smoke test for the binary.
+  version:
+    build: .
+    command: ["version"]
