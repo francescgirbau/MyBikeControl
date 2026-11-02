@@ -361,9 +361,11 @@ Zwift Play/Click i el `config.json` queden per a versions posteriors.
   - Replay de les 966 notificacions de la captura: 22 press i 22 release, cap event
     espuri, estat final buit.
 - Build Linux (`ubuntu:24.04`, `MYBC_WITH_BLE=OFF`): 2/2 tests correctes.
-- Branca BLE validada amb `-fsyntax-only` contra les capçaleres de SimpleBLE 1.3.0.
-- **Pendent:** compilar i provar a Windows amb SimpleBLE/WinRT real, i validar
-  mDNS/TCP amb MyWhoosh i el manillar físic.
+- Branca BLE compilada i enllaçada al CI de Windows amb SimpleBLE/WinRT; els
+  tests també passen allà.
+- PR #8 (`feat/ride-decoder` → `main`) fusionat amb **squash**: `eddc6aa`.
+- CI de `main` en verd: Windows 4m26s, Linux 22s.
+- **Pendent:** prova amb hardware real (MyWhoosh + manillar) i mesura de latència.
 
 ### Decisions d'aquesta sessió
 
@@ -406,8 +408,8 @@ Zwift Play/Click i el `config.json` queden per a versions posteriors.
 - `serve` sense `--demo` ja reenvia botons del **Zwift Ride**; Zwift Play/Click
   encara no estan implementats.
 - El protocol del controlador pot variar segons firmware; cal capturar payloads.
-- La branca BLE s'ha validat amb `-fsyntax-only` contra les capçaleres de SimpleBLE
-  1.3.0, però encara no s'ha enllaçat ni executat en Windows.
+- La branca BLE s'ha compilat i enllaçat al CI de Windows amb SimpleBLE/WinRT i
+  els tests passen; encara no s'ha provat amb el manillar físic ni MyWhoosh.
 - El framing TCP de `0x01` no té length prefix; es manté un `send()` per missatge.
 - SimpleBLE 1.3.0 és BSL 1.1 per a ús no comercial; si el projecte es comercialitza,
   cal una llicència alternativa.
