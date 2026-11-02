@@ -46,6 +46,8 @@ class Server {
     bool sendButton(uint8_t buttonId, uint8_t state);
     bool sendButtonState(const Bytes& pairs);
     bool sendDeviceStatus();
+    bool appSupports(uint8_t buttonId) const;
+    void setBatteryPercent(uint8_t batteryPercent);
 
     void setOnAppInfo(AppInfoCallback callback);
     void setOnHaptic(HapticCallback callback);
@@ -60,6 +62,7 @@ class Server {
 
     DeviceInfo info_;
     uint16_t port_;
+    std::atomic<uint8_t> batteryPercent_{0xFF};
     net::Socket listenFd_ = net::kInvalidSocket;
     std::atomic<bool> running_{false};
     std::thread acceptThread_;

@@ -1,7 +1,7 @@
 # Memòria del projecte i de la sessió
 
 > Context per reprendre el projecte sense haver de reconstruir les decisions.
-> Última actualització: **2026-11-01**.
+> Última actualització: **2026-11-02**.
 > Documents principals: [`README.md`](../README.md) i [`PLAN.md`](PLAN.md).
 
 ---
@@ -21,7 +21,7 @@ El **Wahoo KICKR Core no es toca**: el continua controlant MyWhoosh. Enviem nom�
 `Shift Up` / `Shift Down` per evitar que dues centrals escriguin al mateix
 *Fitness Machine Control Point*.
 
-- **Versió:** 0.1.0 (esquelet + Fase 1)
+- **Versió:** 0.2.0 (Fase 1 + descodificador Ride + integració al `serve`)
 - **Plataforma objectiu:** Windows 10 1709+ / Windows 11, x64
 - **Llenguatge:** C++17
 - **Build:** CMake ≥ 3.21 + MSVC 2022 (Visual Studio 17 2022)
@@ -170,7 +170,7 @@ Convenció adoptada: **un `send()` per missatge** amb `TCP_NODELAY`. El parser
 d'entrada és incremental i tolerant perquè `0x03` i `0x04` sí que es poden
 reconstruir.
 
-### Button IDs previstos
+### Button IDs implementats
 
 | ID | Acció | Origen previst |
 | --- | --- | --- |
@@ -189,6 +189,50 @@ reconstruir.
 
 Els botons no suportats per l'app s'ignoren gràcies al missatge `0x04` (App Info),
 que arriba just després de connectar.
+
+### Zwift Ride: protocol i mapatge
+
+- **Servei:** `0000fc82-0000-1000-8000-00805f9b34fb`.
+- **Notificacions de botons:** `00000002-19ca-4651-86e5-fa29dcdd09d1`.
+- **Escriptura del handshake:** `00000003-19ca-4651-86e5-fa29dcdd09d1`.
+- **Indicacions del handshake:** `00000004-19ca-4651-86e5-fa29dcdd09d1`.
+- **Número de sèrie:** `00002a25-0000-1000-8000-00805f9b34fb`
+  (servei Device Information `0000180a-...`).
+- **Handshake:** subscriure a `00000002` (notify) i `00000004` (indicate), esperar
+  ~500 ms i escriure ASCII `RideOn` (`52 69 64 65 4f 6e`) a `00000003` sense
+  resposta.
+- **Opcode de botons:** `0x23` (`RideKeyPadStatus`); keep-alive `0x15`; bateria
+  `0x19`; missatge de vendor `0x2a`.
+- **Protobuf:** camp 1 = `buttonMap` (varint, **actiu baix**: bit a 0 = premut);
+  camp 3 = `analogPaddles` repetit (`location` camp 1, `value` camp 2).
+- **Màscares Ride** (les de `zwift_ride.dart`, no les del protobuf generat):
+  - `0x00001` LEFT, `0x00002` UP, `0x00004` RIGHT, `0x00008` DOWN;
+  - `0x00010` A, `0x00020` B, `0x00040` Y, `0x00080` Z;
+  - `0x00100` SHIFT_UP_L, `0x00200` SHIFT_DN_L, `0x00400` POWERUP_L,
+    `0x00800` ONOFF_L;
+  - `0x01000` SHIFT_UP_R, `0x02000` SHIFT_DN_R, `0x04000` POWERUP_R,
+    `0x08000` ONOFF_R.
+- **Mapatge OBC:**
+  - LEFT/RIGHT → `Steer Left`/`Steer Right`;
+  - UP/DOWN → `Up`/`Down`;
+  - A/B/Y/Z → `Select`/`Back`/`Menu`/`Emote`;
+  - tots els controls d'esquerra (`SHIFT_UP_L`, `SHIFT_DN_L`, `POWERUP_L`) i la
+    palanca analògica `location 0` → `Shift Down`;
+  - tots els controls de dreta (`SHIFT_UP_R`, `SHIFT_DN_R`, `POWERUP_R`) i la
+    palanca analògica `location 1` → `Shift Up`;
+  - ONOFF_L/R → `HUD Toggle`.
+- **Palanca analògica:** `location 0` = esquerra, `location 1` = dreta; valor
+  absolut; pressió ≥ 25, alliberament ≤ 20 (histèresi). El dispositiu envia les
+  quatre ubicacions a cada notificació; les que falten es tracten com a 0.
+- **Meitats del Ride:** la meitat esquerra (sèrie `08-...`) actua com a mestre i
+  reporta navegació, controls esquerres i totes les palanques; la dreta
+  (`07-...`) reporta els seus controls i la palanca dreta. El bridge connecta a
+  totes dues i **fusiona** els estats OBC amb unió, de manera que un botó reportat
+  per les dues només genera una parella press/release.
+- **Captures de referència:** esquerra `08-4222A1C4D938` (`C2:22:A1:C4:D9:38`),
+  dreta `07-9031A296E373` (`D0:31:A2:96:E3:73`), firmware `1.2.0`, hardware `B.0`.
+  Els controladors s'adormen de pressa: cal prémer un botó per despertar-los i
+  escanejar al mateix procés.
 
 ---
 
@@ -239,19 +283,20 @@ que arriba just després de connectar.
 | --- | --- |
 | 1. Descoberta BLE (`scan`, `inspect --notify`) | ✅ implementat |
 | Transport OBC (`serve`, mDNS/TCP, `--demo`) | ✅ implementat |
-| 2. Descodificació del controlador Zwift | ⏳ següent |
-| 3. Pont i mapatge configurable | ⏳ |
+| 2. Descodificació del controlador Zwift Ride | ✅ implementat |
+| 3. Pont i mapatge | ✅ integrat al `serve` (mapatge fix; JSON pendent) |
 | 4. Integració i latència | ⏳ |
 | 5. Robustesa | ⏳ |
 | 6. Empaquetat Windows | ⏳ |
 
-`serve` ja anuncia el dispositiu per mDNS i accepta connexions TCP. El que encara
-no hi és és el descodificador que converteix les notificacions BLE del manillar en
-botons; per això `--demo` és la manera de provar el transport avui.
+`serve` sense `--demo` ja busca el Zwift Ride per BLE, envia el handshake `RideOn`,
+descodifica les notificacions i reenvia els botons a MyWhoosh. Les dues meitats del
+Ride es fusionen per evitar esdeveniments duplicats. El mapatge és fix per al Ride;
+Zwift Play/Click i el `config.json` queden per a versions posteriors.
 
 ---
 
-## 9. Registre de la sessió (2026-11-01)
+## 9. Registre de les sessions (2026-11-01/02)
 
 ### Implementació
 
@@ -288,6 +333,38 @@ botons; per això `--demo` és la manera de provar el transport avui.
   `feat/obc-server`, `feat/windows`.
 - Estat final de branques: només `main`.
 
+### Sessió 2026-11-02: descodificador i pont Ride
+
+- Captura BLE real de les dues meitats del Ride amb `bleak` 3.0.2 (WinRT).
+- Identificat el protocol: opcode `0x23`, protobuf amb `buttonMap` actiu baix i
+  `analogPaddles`; handshake `RideOn`; keep-alive `0x15`; bateria `0x19`.
+- Implementat `RideDecoder` (`include/mybc/ble/ride_decoder.h`,
+  `src/ble/ride_decoder.cpp`):
+  - parser protobuf sense dependències;
+  - mapatge de màscares Ride a IDs OBC;
+  - histèresi de les palanques analògiques;
+  - detecció de flancs per generar exactament un press i un release.
+- Implementat `RideBridge` (`include/mybc/ble/ride_bridge.h`,
+  `src/ble/ride_bridge.cpp`):
+  - scan de dispositius Zwift Ride;
+  - connexió a totes les meitats, lectura de sèrie, subscripcions i `RideOn`;
+  - fusió d'estats per adreça i reconnexió automàtica;
+  - actualització de bateria.
+- Integrat al `serve`:
+  - opció `--controller` per filtrar nom/adreça;
+  - filtratge per App Info (`Server::appSupports`);
+  - enviament de tots els canvis simultanis en un sol missatge `0x01`;
+  - `--demo` continua funcionant sense BLE.
+- Tests:
+  - `tests/test_ride_decoder.cpp` amb payloads reals de released, Shift Up/Down,
+    palanques, navegació, A/B/Y/Z, ON/OFF, keep-alive, missatges malformats i reset.
+  - Replay de les 966 notificacions de la captura: 22 press i 22 release, cap event
+    espuri, estat final buit.
+- Build Linux (`ubuntu:24.04`, `MYBC_WITH_BLE=OFF`): 2/2 tests correctes.
+- Branca BLE validada amb `-fsyntax-only` contra les capçaleres de SimpleBLE 1.3.0.
+- **Pendent:** compilar i provar a Windows amb SimpleBLE/WinRT real, i validar
+  mDNS/TCP amb MyWhoosh i el manillar físic.
+
 ### Decisions d'aquesta sessió
 
 - No controlar mai el KICKR; només pass-through de `Shift Up` / `Shift Down`.
@@ -301,23 +378,22 @@ botons; per això `--demo` és la manera de provar el transport avui.
 
 ## 10. Properes passes
 
-1. **Capturar payloads reals** amb `mybc inspect <index> --notify` per a la variant
-   de manillar disponible (Ride / Play / Click / firmware).
-2. Implementar el **descodificador** de la Fase 2:
-   - detectar la variant per nom/servei/firmware;
-   - debounce per contacte (press + release);
-   - tests unitaris amb payloads reals.
-3. Connectar el descodificador al servidor OBC (Fase 3):
-   - `config.json` amb mapatge `payload → button ID`;
-   - enviar `0x01` només en canvi d'estat;
-   - filtrar per App Info.
-4. Provar amb **hardware Windows real** i MyWhoosh:
+1. **Provar amb hardware Windows real** i MyWhoosh:
+   - compilar amb MSVC + SimpleBLE/WinRT;
    - descoberta mDNS;
-   - latència de puny a canvi de marxa;
+   - prémer els botons del Ride i comprovar `Shift Up`/`Shift Down`;
+   - mesurar latència de puny a canvi de marxa;
    - firewall i xarxa Private.
-5. Robustesa (Fase 5): reconnexió BLE, diversos clients TCP, Device Status,
+2. **Afegir suport per Zwift Play / Click**:
+   - detectar la variant per nom/servei/firmware;
+   - reutilitzar el parser i el mapatge OBC;
+   - capturar payloads amb `inspect --notify`.
+3. **Configuració** (Fase 3 completa):
+   - `config.json` amb mapatge `payload → button ID` i opcions de debounce;
+   - permetre desactivar botons no relacionats amb el canvi de marxa.
+4. Robustesa (Fase 5): backoff exponencial, diversos clients TCP, Device Status,
    tancament net amb `SIGINT`/`SIGTERM`.
-6. Empaquetat Windows (Fase 6): runtime MSVC o `/MT`, firewall, opcionalment
+5. Empaquetat Windows (Fase 6): runtime MSVC o `/MT`, firewall, opcionalment
    instal·lador i signatura.
 
 ---
@@ -327,8 +403,11 @@ botons; per això `--demo` és la manera de provar el transport avui.
 - **No s'ha provat amb hardware real** en aquest entorn: BLE, mDNS i MyWhoosh
   només es poden validar en un Windows amb Bluetooth i el manillar.
 - El CI valida compilació i TCP, però **no** BLE ni descoberta mDNS real.
-- `serve` sense `--demo` encara **no** reenvia botons reals: falta el descodificador.
+- `serve` sense `--demo` ja reenvia botons del **Zwift Ride**; Zwift Play/Click
+  encara no estan implementats.
 - El protocol del controlador pot variar segons firmware; cal capturar payloads.
+- La branca BLE s'ha validat amb `-fsyntax-only` contra les capçaleres de SimpleBLE
+  1.3.0, però encara no s'ha enllaçat ni executat en Windows.
 - El framing TCP de `0x01` no té length prefix; es manté un `send()` per missatge.
 - SimpleBLE 1.3.0 és BSL 1.1 per a ús no comercial; si el projecte es comercialitza,
   cal una llicència alternativa.
@@ -350,6 +429,7 @@ ctest --test-dir build -C Release --output-on-failure
 .\build\Release\mybc.exe inspect 0 --notify --seconds 30
 .\build\Release\mybc.exe serve --demo
 .\build\Release\mybc.exe serve --name "MyBikeControl"
+.\build\Release\mybc.exe serve --name "MyBikeControl" --controller "Zwift Ride"
 ```
 
 ### Linux / CI

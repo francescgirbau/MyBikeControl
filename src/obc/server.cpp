@@ -63,9 +63,14 @@ struct Server::Shared {
     AppInfoCallback onAppInfo;
     HapticCallback onHaptic;
     ClientCallback onClient;
+
+    AppInfo appInfo;
+    bool hasAppInfo = false;
 };
 
-Server::Server(DeviceInfo info, uint16_t port) : info_(std::move(info)), port_(port) {}
+Server::Server(DeviceInfo info, uint16_t port) : info_(std::move(info)), port_(port) {
+    batteryPercent_ = info_.batteryPercent;
+}
 
 Server::~Server() { stop(); }
 
@@ -179,8 +184,23 @@ bool Server::sendButtonState(const Bytes& pairs) {
 }
 
 bool Server::sendDeviceStatus() {
-    const Bytes message = encodeDeviceStatus(info_.batteryPercent, true);
+    const Bytes message = encodeDeviceStatus(batteryPercent_.load(), true);
     return sendAll(message.data(), message.size());
+}
+
+bool Server::appSupports(uint8_t buttonId) const {
+    if (!shared_) {
+        return true;
+    }
+    std::lock_guard<std::mutex> lock(shared_->mutex);
+    if (!shared_->hasAppInfo) {
+        return true;
+    }
+    return shared_->appInfo.supports(buttonId);
+}
+
+void Server::setBatteryPercent(uint8_t batteryPercent) {
+    batteryPercent_ = batteryPercent;
 }
 
 void Server::setOnAppInfo(AppInfoCallback callback) {
@@ -276,6 +296,8 @@ void Server::clientLoop(std::shared_ptr<Shared> shared, net::Socket fd) {
                     AppInfoCallback onAppInfo;
                     {
                         std::lock_guard<std::mutex> lock(shared->mutex);
+                        shared->appInfo = message.appInfo;
+                        shared->hasAppInfo = true;
                         onAppInfo = shared->onAppInfo;
                     }
                     if (onAppInfo) {

@@ -4,11 +4,12 @@
 > parlant el protocol obert **OpenBikeControl**. El rodet **Wahoo KICKR Core** no es toca:
 > el controla MyWhoosh amb **MyShift**.
 
-- **Versió:** 0.1.0 (esquelet + Fase 1)
-- **Data:** 2026-11-01
+- **Versió:** 0.2.0 (Fase 1 + descodificador Ride + integració al `serve`)
+- **Data:** 2026-11-02
 - **Plataforma objectiu:** Windows 10 1709+ / Windows 11, x64
-- **Estat:** `scan` i `inspect` implementats; `serve` amb transport mDNS/TCP i mode demo,
-  amb sockets Winsock i DNS-SD natiu de Windows.
+- **Estat:** `scan`, `inspect` i `serve` implementats; `serve` connecta al Zwift Ride
+  per BLE, descodifica els botons i els publica per mDNS/TCP. Sockets Winsock i
+  DNS-SD natiu de Windows; mode `--demo` per provar sense manillar.
 
 ---
 
@@ -174,9 +175,12 @@ just després de connectar.
 **Criteri d'acceptació:** prémer els botons del Ride produeix notificacions identificables
 amb el botó premut i alliberat.
 
-### Fase 2 — Descodificació del controlador
+### Fase 2 — Descodificació del controlador (feta per al Zwift Ride)
 
 **Objectiu:** convertir els payloads BLE en esdeveniments de botó.
+
+> Implementat a `src/ble/ride_decoder.cpp` amb tests de payloads reals. Zwift
+> Play/Click queden pendents.
 
 Referència principal (Dart, només per a ús personal): `lib/bluetooth/devices/zwift/`
 del repo de BikeControl, amb variants `zwift_ride.dart`, `zwift_play.dart`,
@@ -193,9 +197,12 @@ Tasques:
 **Criteri d'acceptació:** cada botó físic genera exactament una parella press/release i
 cap event espuri en repòs.
 
-### Fase 3 — Pont i mapatge
+### Fase 3 — Pont i mapatge (integrat; configuració pendent)
 
 **Objectiu:** connectar el descodificador al servidor OBC.
+
+> `RideBridge` connecta, fa el handshake i fusiona les dues meitats. El mapatge
+> és fix per al Ride; el `config.json` encara no existeix.
 
 - `config.json` amb mapatge `payload → button ID` i opcions de debounce.
 - Enviar `0x01` només en canvi d'estat, amb tots els canvis simultanis en un sol missatge.

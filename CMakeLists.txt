@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(MyBikeControl VERSION 0.1.0 LANGUAGES CXX)
+project(MyBikeControl VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,6 +23,7 @@ find_package(Threads REQUIRED)
 add_library(mybc_core
   src/log.cpp
   src/net.cpp
+  src/ble/ride_decoder.cpp
   src/obc/protocol.cpp
   src/obc/server.cpp
   src/obc/mdns.cpp
@@ -43,6 +44,7 @@ endif()
 
 add_executable(mybc
   src/main.cpp
+  src/ble/ride_bridge.cpp
   src/ble/scanner.cpp
 )
 target_link_libraries(mybc PRIVATE mybc_core)
@@ -71,4 +73,8 @@ if(MYBC_BUILD_TESTS)
   add_executable(mybc_tests tests/test_protocol.cpp)
   target_link_libraries(mybc_tests PRIVATE mybc_core)
   add_test(NAME protocol COMMAND mybc_tests)
+
+  add_executable(mybc_ride_tests tests/test_ride_decoder.cpp)
+  target_link_libraries(mybc_ride_tests PRIVATE mybc_core)
+  add_test(NAME ride_decoder COMMAND mybc_ride_tests)
 endif()
