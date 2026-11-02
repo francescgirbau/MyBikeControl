@@ -5,11 +5,13 @@
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "mybc/ble/ride_bridge.h"
 #include "mybc/ble/scanner.h"
 #include "mybc/log.h"
 #include "mybc/net.h"
@@ -25,7 +27,7 @@ namespace ble = mybc::ble;
 
 namespace {
 
-constexpr const char* kVersion = "0.1.0";
+constexpr const char* kVersion = "0.2.0";
 
 volatile std::sig_atomic_t g_stop = 0;
 
@@ -37,7 +39,8 @@ void printUsage() {
               << "Usage:\n"
               << "  mybc scan    [--seconds N] [--filter TEXT]\n"
               << "  mybc inspect <index|name|address> [--seconds N] [--notify]\n"
-              << "  mybc serve   [--port N] [--name TEXT] [--id TEXT] [--no-mdns] [--demo]\n"
+              << "  mybc serve   [--port N] [--name TEXT] [--id TEXT] [--controller TEXT]\n"
+              << "               [--no-mdns] [--demo]\n"
               << "  mybc version\n"
               << "  mybc help\n\n"
               << "Commands:\n"
@@ -53,6 +56,7 @@ void printUsage() {
               << "  --port N      TCP port for serve (default 8080, 0 = random).\n"
               << "  --name S      Device name advertised to the trainer app.\n"
               << "  --id S        Unique device id advertised in the mDNS TXT record.\n"
+              << "  --controller S  BLE name/address filter (default: Zwift Ride).\n"
               << "  --no-mdns     Skip mDNS advertising (manual TCP testing).\n"
               << "  --demo        Serve without a controller and cycle gears.\n"
               << "  --verbose     Enable debug logs.\n";
@@ -184,6 +188,47 @@ int runServe(const std::vector<std::string>& args) {
                       "automatically");
     }
 
+    std::unique_ptr<ble::RideBridge> bridge;
+    if (!demo) {
+        ble::RideBridgeOptions bridgeOptions;
+        if (const auto value = optionValue(args, "--controller")) {
+            bridgeOptions.target = *value;
+        }
+
+        bridge = std::make_unique<ble::RideBridge>(
+            bridgeOptions,
+            [&server](const std::vector<ble::ButtonEvent>& events) {
+                obc::Bytes pairs;
+                for (const ble::ButtonEvent& event : events) {
+                    if (!server.appSupports(event.buttonId)) {
+                        continue;
+                    }
+                    pairs.push_back(event.buttonId);
+                    pairs.push_back(event.pressed ? obc::kStatePressed : obc::kStateReleased);
+                }
+
+                if (pairs.empty()) {
+                    return;
+                }
+
+                server.sendButtonState(pairs);
+                for (size_t i = 0; i + 1 < pairs.size(); i += 2) {
+                    mybc::logInfo(std::string("controller: ") + obc::buttonName(pairs[i]) +
+                                  (pairs[i + 1] == obc::kStatePressed ? " pressed"
+                                                                     : " released"));
+                }
+            },
+            [&server](uint8_t battery) {
+                server.setBatteryPercent(battery);
+                mybc::logInfo("controller battery: " + std::to_string(battery) + "%");
+            });
+
+        if (!bridge->start()) {
+            mybc::logWarn("BLE bridge not started; use --demo for synthetic shifts");
+            bridge.reset();
+        }
+    }
+
     std::cout << "\nMyBikeControl is ready.\n"
               << "  device name : " << info.name << "\n"
               << "  device id   : " << info.id << "\n"
@@ -193,7 +238,7 @@ int runServe(const std::vector<std::string>& args) {
               << "  2. Tap the OpenBikeControl icon (top right) and confirm.\n"
               << "  3. Start riding; shift buttons should change MyShift gears.\n\n"
               << (demo ? "DEMO MODE: no controller needed, gears will cycle every 3 s.\n"
-                       : "Waiting for the controller on the BLE side (next phase).\n")
+                       : "BLE: scanning for Zwift Ride controllers; press a button to wake them.\n")
               << "Press Ctrl+C to stop.\n\n";
 
     auto lastStatus = std::chrono::steady_clock::now();
@@ -233,6 +278,9 @@ int runServe(const std::vector<std::string>& args) {
         }
     }
 
+    if (bridge) {
+        bridge->stop();
+    }
     mdns.stop();
     server.stop();
     mybc::logInfo("stopped");

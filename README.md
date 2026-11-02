@@ -25,15 +25,17 @@ Zwift Ride/Play --BLE--> MyBikeControl --OpenBikeControl--> MyWhoosh --FTMS--> K
 | --- | --- |
 | 1. Descoberta BLE (`scan`, `inspect --notify`) | ✅ implementat |
 | Transport OpenBikeControl (`serve`, mDNS/TCP, mode `--demo`) | ✅ implementat |
-| 2. Descodificació del controlador Zwift | ⏳ següent |
-| 3. Pont i mapatge configurable | ⏳ |
+| 2. Descodificació del controlador Zwift Ride | ✅ implementat |
+| 3. Pont i mapatge | ✅ integrat al `serve` (mapatge fix; JSON pendent) |
 | 4. Integració i latència | ⏳ |
 | 5. Robustesa | ⏳ |
 | 6. Empaquetat Windows | ⏳ |
 
-> `serve` ja anuncia el dispositiu per mDNS i accepta connexions TCP. El que encara
-> no hi és és el descodificador que converteix les notificacions BLE del manillar en
-> botons; per això `--demo` és la manera de provar el transport avui.
+> `serve` sense `--demo` ja busca el **Zwift Ride** per BLE, envia el handshake
+> `RideOn`, descodifica les notificacions i reenvia els botons a MyWhoosh. El
+> mapatge és fix per al Ride; Zwift Play/Click i el `config.json` queden per a
+> versions posteriors. `--demo` continua servint per provar el transport sense
+> manillar.
 
 ---
 
@@ -92,7 +94,8 @@ El manillar ha d'estar despert i **no connectat a Zwift**. Prem un botó per des
 ```
 
 Mostra l'arbre GATT i hexdumpeja cada notificació. Prem els botons durant la captura:
-aquestes dades són les que faran servir per implementar el descodificador de la Fase 2.
+és útil per diagnosticar o per afegir suport a variants noves. El descodificador del
+**Zwift Ride** ja està implementat i provat amb payloads reals.
 
 ### 3. Provar el pont sense manillar
 
@@ -109,6 +112,11 @@ Publica el dispositiu per mDNS i alterna `Shift Up`/`Shift Down` cada 3 segons.
 .\build\Release\mybc.exe serve --name "MyBikeControl"
 ```
 
+En arrencar, `serve` busca el Zwift Ride per BLE. Prem un botó del manillar per
+despertar-lo; el pont es connecta a les dues meitats, envia el handshake `RideOn`
+i comença a reenviar els botons. Si el manillar ja està connectat a Zwift, cal
+desconnectar-lo d'allà primer.
+
 Opcions:
 
 | Opció | Descripció |
@@ -116,9 +124,21 @@ Opcions:
 | `--port N` | Port TCP (per defecte 8080; `0` = aleatori) |
 | `--name S` | Nom visible a MyWhoosh |
 | `--id S` | Identificador únic del TXT mDNS |
+| `--controller S` | Filtre de nom/adreça BLE (per defecte `Zwift Ride`) |
 | `--no-mdns` | No anunciar per mDNS (proves manuals) |
 | `--demo` | Generar canvis de marxa sintètics |
 | `--verbose` | Logs de debug |
+
+### Mapatge del Zwift Ride
+
+- Els controls de canvi del costat **esquerre** i la palanca analògica esquerra
+  envien `Shift Down` (`0x02`).
+- Els controls del costat **dret** i la palanca analògica dreta envien
+  `Shift Up` (`0x01`).
+- Les dues meitats del Ride es fusionen perquè un botó reportat per totes dues
+  generi exactament una parella press/release.
+- Els botons de navegació, A/B/Y/Z i ON/OFF també es tradueixen a IDs OBC; si
+  l'app no els anuncia a l'App Info, s'ignoren.
 
 ---
 
@@ -160,6 +180,8 @@ Bluetooth stack.
 | --- | --- | --- |
 | `No Bluetooth adapter found` | Bluetooth apagat o adaptador no disponible | Activa'l a *Settings → Bluetooth & devices* |
 | El manillar no apareix a `scan` | Està connectat a Zwift o adormit | Desconnecta'l de Zwift i prem un botó |
+| `serve` troba el Ride però no arriben botons | El handshake no s'ha completat o el firmware és diferent | Comprova el log `RideOn handshake sent`; captura amb `inspect --notify` |
+| El Ride no canvia la marxa | MyShift desactivat, app no connectada o botó no suportat | Revisa `app connected` i l'App Info; prova `serve --demo` |
 | `DnsServiceRegister failed with code …` | Windows massa antic, DNS Client aturat o xarxa bloquejada | Windows 10 1709+; revisa el servei *DNS Client* i el firewall |
 | MyWhoosh no veu el bridge | mDNS bloquejat o xarxa diferent | Mateixa xarxa, perfil **Private**, firewall i UDP 5353 |
 | `bind() failed on port 8080` | Port ocupat | `--port 0` o un altre port |
@@ -211,6 +233,8 @@ include/mybc/
   log.h
   net.h               # abstracció Winsock/POSIX
   ble/scanner.h
+  ble/ride_decoder.h  # descodificador Zwift Ride
+  ble/ride_bridge.h   # scan/connect/handshake/reconnect
   obc/protocol.h      # IDs, missatges i parser
   obc/server.h        # servidor TCP OBC
   obc/mdns.h          # anunci mDNS (DNS-SD)
@@ -219,10 +243,13 @@ src/
   log.cpp
   net.cpp
   ble/scanner.cpp
+  ble/ride_decoder.cpp
+  ble/ride_bridge.cpp
   obc/protocol.cpp
   obc/server.cpp
   obc/mdns.cpp
 tests/test_protocol.cpp
+tests/test_ride_decoder.cpp
 docs/PLAN.md
 ```
 
